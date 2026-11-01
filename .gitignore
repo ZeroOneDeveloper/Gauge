@@ -1,0 +1,26 @@
+.build/
+dist/
+.DS_Store
+.swiftpm/
+*.xcuserstate
+
+# Local authentication, signing material, and account data
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.pfx
+*.key
+*.mobileprovision
+*.provisionprofile
+.credentials.json
+state.json
+ClaudeProfiles/
+CodexProfiles/
+
+# Editor and local build artifacts
+.idea/
+.vscode/
+*.dmg
+*.zip
