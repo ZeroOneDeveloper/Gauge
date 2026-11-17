@@ -4,7 +4,8 @@ import GaugeCore
 
 struct SettingsView: View {
     @EnvironmentObject var store: AppStore
-    @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginItemStatus = SMAppService.mainApp.status
+    @State private var loginItemError: String?
     @State private var codexPath = CodexConnection.executable()?.path ?? "미설정"
     var body: some View {
         VStack(alignment: .leading, spacing: 25) {
@@ -20,19 +21,28 @@ struct SettingsView: View {
                         }.labelsHidden().frame(width: 120)
                     }
                     Divider().overlay(Palette.line)
-                    HStack {
-                        settingText("로그인할 때 실행", "Mac을 켜면 메뉴 막대에서 바로 만나요.")
-                        Spacer()
-                        Toggle("로그인할 때 실행", isOn: $launchesAtLogin).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            .onChange(of: launchesAtLogin) { _, enabled in
-                                do {
-                                    if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                                    if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-                                } catch {
-                                    store.globalError = "로그인 항목을 변경하지 못했어요. 앱을 Applications 폴더에 옮긴 후 다시 시도해 주세요."
-                                    launchesAtLogin = SMAppService.mainApp.status == .enabled
-                                }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            settingText("Mac 로그인 시 자동 실행", loginItemStatus == .enabled
+                                        ? "자동 실행이 켜져 있어요." : "Mac에 로그인하면 Gauge가 자동으로 시작돼요.")
+                            Spacer()
+                            Toggle("Mac 로그인 시 자동 실행", isOn: Binding(
+                                get: { loginItemStatus == .enabled || loginItemStatus == .requiresApproval },
+                                set: setLaunchesAtLogin
+                            )).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
+                        if loginItemStatus == .requiresApproval {
+                            HStack {
+                                Text("시스템 설정에서 Gauge를 허용해야 자동으로 실행돼요.")
+                                    .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                                Spacer()
+                                Button("로그인 항목 열기") { SMAppService.openSystemSettingsLoginItems() }
+                                    .buttonStyle(QuietButtonStyle())
                             }
+                        }
+                        if let loginItemError {
+                            Text(loginItemError).font(.system(size: 12)).foregroundStyle(Palette.red)
+                        }
                     }
                     Divider().overlay(Palette.line)
                     HStack {
@@ -73,11 +83,28 @@ struct SettingsView: View {
                         }.buttonStyle(QuietButtonStyle())
                         Button("이 Mac 계정 연결") { Task { await store.connectLocalAccounts() } }.buttonStyle(QuietButtonStyle()).disabled(store.isConnectingLocal)
                         Spacer()
-                        Text("Gauge 1.0.0").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                        Text("Gauge \(GaugeVersion.current)").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                     }
                 }
             }
         }
+        .onAppear { loginItemStatus = SMAppService.mainApp.status }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItemStatus = SMAppService.mainApp.status
+        }
+    }
+    private func setLaunchesAtLogin(_ enabled: Bool) {
+        let service = SMAppService.mainApp
+        loginItemError = nil
+        do {
+            if enabled, service.status == .notRegistered || service.status == .notFound { try service.register() }
+            if !enabled, service.status == .enabled || service.status == .requiresApproval { try service.unregister() }
+        } catch {
+            if service.status != .requiresApproval {
+                loginItemError = "자동 실행 설정을 바꾸지 못했어요. 응용 프로그램 폴더에서 Gauge를 열고 다시 시도해 주세요."
+            }
+        }
+        loginItemStatus = service.status
     }
     private func settingText(_ title: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {

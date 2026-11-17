@@ -60,12 +60,39 @@ public enum UsageLevel: String {
     public var title: String { switch self { case .good: "여유로워요"; case .caution: "주의가 필요해요"; case .critical: "한도에 가까워요" } }
 }
 
+/// Billed credits are separate from included subscription quota windows.
+public struct UsageCredits: Codable, Equatable {
+    public var usedMinorUnits: Double?
+    public var limitMinorUnits: Double?
+    public var currency: String?
+    public var usedPercent: Double?
+
+    public var amountLabel: String? {
+        func format(_ value: Double?) -> String? {
+            guard let value else { return nil }
+            guard let currency, Locale.commonISOCurrencyCodes.contains(currency.uppercased()) else {
+                return value.formatted() + " 크레딧 단위"
+            }
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .currency
+            formatter.currencyCode = currency.uppercased()
+            let divisor = pow(10.0, Double(formatter.maximumFractionDigits))
+            return formatter.string(from: NSNumber(value: value / divisor))
+        }
+        let used = format(usedMinorUnits), limit = format(limitMinorUnits)
+        if let used, let limit { return "\(used) / \(limit)" }
+        if let used { return "\(used) 사용" }
+        return limit.map { "월 한도 " + $0 }
+    }
+}
+
 public struct UsageSnapshot: Codable, Equatable {
     public var windows: [UsageWindow]
     public var fetchedAt: Date
     public var plan: String?
-    public init(windows: [UsageWindow], fetchedAt: Date = Date(), plan: String? = nil) {
-        self.windows = windows; self.fetchedAt = fetchedAt; self.plan = plan
+    public var usageCredits: UsageCredits?
+    public init(windows: [UsageWindow], fetchedAt: Date = Date(), plan: String? = nil, usageCredits: UsageCredits? = nil) {
+        self.windows = windows; self.fetchedAt = fetchedAt; self.plan = plan; self.usageCredits = usageCredits
     }
     public var peak: UsageWindow? { windows.max { $0.usedPercent < $1.usedPercent } }
     public func currentPeak(at now: Date = Date()) -> UsageWindow? {

@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import GaugeCore
 
+enum GaugeVersion {
+    static let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+}
+
 @main
 struct GaugeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate

@@ -47,7 +47,7 @@ final class ClaudeService {
         guard let url = URL(string: host + path) else { throw GaugeError.unsupported }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Gauge/1.0 (macOS; usage monitor)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Gauge/\(GaugeVersion.current) (macOS; usage monitor)", forHTTPHeaderField: "User-Agent")
         if kind.usesClaudeOAuth {
             request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")

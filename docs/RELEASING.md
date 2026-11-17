@@ -56,9 +56,9 @@ cd dist && shasum -a 256 -c SHA256SUMS.txt
 Commit the source, tag that commit, and upload only the three intended assets:
 
 ```sh
-git tag v1.0.0
-git push origin main v1.0.0
-gh release create v1.0.0 --verify-tag --title "Gauge v1.0.0" \
+git tag v1.1.0
+git push origin main v1.1.0
+gh release create v1.1.0 --verify-tag --title "Gauge v1.1.0" \
   --notes-file .build/release-notes.md \
   dist/Gauge-macOS-universal.dmg dist/Gauge-macOS-universal.zip dist/SHA256SUMS.txt
 ```

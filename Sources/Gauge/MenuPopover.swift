@@ -73,20 +73,28 @@ struct MenuPopover: View {
                                     Spacer()
                                 }
                                 if let snapshot = store.snapshots[account.id.uuidString] {
+                                    let failed = store.errors[account.id] != nil
                                     ForEach(snapshot.windows) { window in
-                                        HStack(spacing: 8) {
-                                            Text(window.title).font(.system(size: 14)).foregroundStyle(Palette.secondary).frame(width: 55, alignment: .leading).lineLimit(1)
-                                            UsageBar(percent: window.usedPercent, muted: store.errors[account.id] != nil || window.isStale(at: store.now, fetchedAt: snapshot.fetchedAt), height: 6)
-                                            Text("\(Int(window.usedPercent.rounded()))%").font(.system(size: 14, weight: .semibold, design: .monospaced)).frame(width: 43, alignment: .trailing)
-                                        }
+                                        let stale = failed || window.isStale(at: store.now, fetchedAt: snapshot.fetchedAt)
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            HStack(alignment: .firstTextBaseline) {
+                                                Text(window.title).font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                                Spacer(minLength: 8)
+                                                Text("\(Int(window.usedPercent.rounded()))%").font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                            }
+                                            UsageBar(percent: window.usedPercent, muted: stale, height: 6)
+                                            if window.resetsAt != nil {
+                                                Text(UsageFormatting.countdown(to: window.resetsAt, now: store.now))
+                                                    .font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                                            }
+                                        }.accessibilityElement(children: .combine)
                                     }
-                                    HStack {
-                                        Text(store.errors[account.id] == nil ? UsageFormatting.age(snapshot.fetchedAt, now: store.now) : "갱신 실패 · 마지막 확인값")
-                                        Spacer()
-                                        if let window = snapshot.currentPeak(at: store.now) ?? snapshot.peak {
-                                            Text(window.title + " · " + UsageFormatting.countdown(to: window.resetsAt, now: store.now))
-                                        }
-                                    }.font(.system(size: 12)).foregroundStyle(store.errors[account.id] == nil ? Palette.secondary : Palette.red)
+                                    if let credits = snapshot.usageCredits {
+                                        UsageCreditsRow(credits: credits, stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                                    }
+                                    Text(failed ? "갱신 실패 · 마지막 확인값" : UsageFormatting.age(snapshot.fetchedAt, now: store.now))
+                                        .font(.system(size: 12)).foregroundStyle(failed ? Palette.red : Palette.secondary)
                                 } else {
                                     Text(store.errors[account.id] ?? "갱신 대기 중").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                                 }

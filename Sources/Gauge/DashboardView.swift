@@ -105,7 +105,7 @@ struct SidebarView: View {
                 Image(systemName: "lock.shield").font(.system(size: 12))
                 Text("이 Mac에만 안전하게").font(.system(size: 12))
                 Spacer()
-                Text("1.0").font(.system(size: 12, design: .monospaced))
+                Text(GaugeVersion.current).font(.system(size: 12, design: .monospaced))
             }.foregroundStyle(.white.opacity(0.3)).padding(.horizontal, 23).padding(.bottom, 22)
         }.frame(width: 212).background(Palette.sidebar)
     }
@@ -253,6 +253,9 @@ struct AccountCard: View {
                         ForEach(snapshot.windows) { window in
                             UsageWindowRow(window: window, fetchedAt: snapshot.fetchedAt, now: store.now, hasError: error != nil)
                         }
+                        if let credits = snapshot.usageCredits {
+                            UsageCreditsRow(credits: credits, stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                        }
                     }
                 } else {
                     Text("사용량 정보를 기다리고 있어요").font(.system(size: 14)).foregroundStyle(Palette.secondary).frame(height: 85)
@@ -271,6 +274,28 @@ struct AccountCard: View {
                     .padding(.top, 16).overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
             }
         }
+    }
+}
+
+struct UsageCreditsRow: View {
+    var credits: UsageCredits
+    var stale: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("추가 사용 크레딧").font(.system(size: 14, weight: .medium))
+                Spacer(minLength: 8)
+                if let percent = credits.usedPercent {
+                    Text("\(Int(percent.rounded()))% 사용").font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                }
+            }
+            if let percent = credits.usedPercent { UsageBar(percent: percent, muted: stale, height: 6) }
+            if let amount = credits.amountLabel {
+                Text(amount).font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            }
+            if stale { Text("마지막 확인값").font(.system(size: 12)).foregroundStyle(Palette.secondary) }
+        }.accessibilityElement(children: .combine)
     }
 }
 

@@ -14,6 +14,57 @@ final class UsageTests: XCTestCase {
         let snapshot = try UsageParser.claude(Data(#"{"five_hour":{"utilization":0},"seven_day":{"utilization":122}}"#.utf8))
         XCTAssertEqual(snapshot.windows.map(\.usedPercent), [0, 100])
     }
+    func testClaudeStructuredModelAndSurfaceLimitsAlongsideLegacyWindows() throws {
+        let data = Data("""
+        {
+          "five_hour": {"utilization": 20},
+          "seven_day": {"utilization": 1, "resets_at": "2026-11-18T06:00:00Z"},
+          "seven_day_overage_included": {"utilization": 99},
+          "seven_day_sonnet": {"utilization": 12},
+          "limits": [
+            {"kind": "weekly_all", "group": "weekly", "percent": 31},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 57, "is_active": false,
+              "resets_at": "2026-11-19T06:00:00Z", "scope": {"model": {"display_name": "Fable 5.2"}}},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 0,
+              "scope": {"surface": {"display_name": "Claude Code Review"}}},
+            {"kind": "monthly_scoped", "group": "monthly", "percent": 5,
+              "scope": {"surface": {"display_name": "New tool"}}},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": true,
+              "scope": {"model": {"display_name": "Invalid"}}},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 100}
+          ]
+        }
+        """.utf8)
+        let windows = try UsageParser.claude(data).windows
+        XCTAssertEqual(windows.map(\.id), ["five_hour", "seven_day", "seven_day_fable", "seven_day_claude_code_review", "monthly_new_tool", "seven_day_sonnet"])
+        XCTAssertEqual(windows.map(\.usedPercent), [20, 31, 57, 0, 5, 12])
+        XCTAssertEqual(windows[2].title, "Fable · 주간")
+        XCTAssertEqual(windows[3].title, "Claude Code Review · 주간")
+        XCTAssertNotNil(windows[1].resetsAt)
+        XCTAssertNotNil(windows[2].resetsAt)
+    }
+    func testClaudeAdditionalCreditsStaySeparateFromSubscriptionLimits() throws {
+        let snapshot = try UsageParser.claude(Data("""
+        {"seven_day":{"utilization":25},"extra_usage":{"is_enabled":true,"used_credits":1000,"monthly_limit":4000,"currency":"USD"}}
+        """.utf8))
+        XCTAssertEqual(snapshot.windows.map(\.id), ["seven_day"])
+        XCTAssertEqual(snapshot.usageCredits?.usedPercent, 25)
+        XCTAssertEqual(snapshot.usageCredits?.usedMinorUnits, 1000)
+        XCTAssertEqual(snapshot.usageCredits?.currency, "USD")
+        let uncapped = try UsageParser.claude(Data(#"{"extra_usage":{"is_enabled":true,"used_credits":1000,"monthly_limit":null}}"#.utf8))
+        XCTAssertNil(uncapped.usageCredits?.usedPercent)
+        XCTAssertNotNil(uncapped.usageCredits?.amountLabel)
+        XCTAssertThrowsError(try UsageParser.claude(Data(#"{"extra_usage":{"is_enabled":false,"used_credits":0}}"#.utf8)))
+        let legacy = try JSONDecoder().decode(UsageSnapshot.self, from: Data(#"{"windows":[],"fetchedAt":0}"#.utf8))
+        XCTAssertNil(legacy.usageCredits)
+    }
+    func testClaudeRecognizesLegacyFableAndCreditBudgetWindows() throws {
+        let data = Data(#"{"seven_day_overage_included":{"utilization":33},"cinder_cove":{"utilization":16},"wattle_ember":{"utilization":55,"label":"Launch promotion"}}"#.utf8)
+        let windows = try UsageParser.claude(data).windows
+        XCTAssertEqual(windows.map(\.id), ["seven_day_fable", "cinder_cove", "wattle_ember"])
+        XCTAssertEqual(windows.map(\.usedPercent), [33, 16, 55])
+        XCTAssertEqual(windows.last?.title, "Launch promotion")
+    }
     func testNoMeasurementsThrowsRatherThanReportingHealthy() {
         XCTAssertThrowsError(try UsageParser.claude(Data(#"{"five_hour":null}"#.utf8)))
         XCTAssertThrowsError(try UsageParser.codex(Data(#"{"rateLimits":{"primary":null}}"#.utf8)))
@@ -33,6 +84,10 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.count, 1)
         XCTAssertEqual(snapshot.windows[0].title, "주간")
         XCTAssertEqual(snapshot.windows[0].usedPercent, 0)
+    }
+    func testCodexMalformedBucketDoesNotHideOtherModelLimits() throws {
+        let data = Data(#"{"rateLimitsByLimitId":{"disabled":null,"codex":{"primary":{"usedPercent":20}},"review":{"primary":{"usedPercent":5}}}}"#.utf8)
+        XCTAssertEqual(try UsageParser.codex(data).windows.map(\.id), ["codex.primary", "review.primary"])
     }
     func testNonNumericPercentagesAreIgnored() throws {
         let snapshot = try UsageParser.codex(Data(#"{"rateLimits":{"primary":{"usedPercent":true},"secondary":{"usedPercent":15,"windowDurationMins":300}}}"#.utf8))

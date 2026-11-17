@@ -58,7 +58,7 @@ final class CodexConnection {
             Task { @MainActor in self?.failAll(GaugeError.message("Codex 연결이 종료되었어요. 실행 파일을 확인하고 다시 시도해 주세요.")) }
         }
         try process.run()
-        _ = try await request("initialize", params: ["clientInfo": ["name": "gauge", "title": "Gauge", "version": "1.0.0"]])
+        _ = try await request("initialize", params: ["clientInfo": ["name": "gauge", "title": "Gauge", "version": GaugeVersion.current]])
         try send(["method": "initialized", "params": [:]])
     }
 
