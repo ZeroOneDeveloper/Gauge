@@ -68,7 +68,11 @@ final class ClaudeConnection {
         }
         child.terminationHandler = { [weak self] child in
             pipe.fileHandleForReading.readabilityHandler = nil
-            Task { @MainActor in self?.finished(status: child.terminationStatus) }
+            let trailing = pipe.fileHandleForReading.readDataToEndOfFile()
+            Task { @MainActor in
+                self?.receive(trailing, onURL: onURL)
+                self?.finished(status: child.terminationStatus)
+            }
         }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -133,15 +137,30 @@ final class ClaudeConnection {
 
     private func finished(status: Int32) {
         timeout?.cancel(); timeout = nil
+        let failure = Self.loginFailure(in: output)
         process = nil; input = nil; output = ""
         let continuation = completion
         completion = nil
         if cancelled { continuation?.resume(throwing: CancellationError()) }
         else if timedOut { continuation?.resume(throwing: GaugeError.message("로그인 대기 시간이 지났어요. 다시 시도해 주세요.")) }
         else if status == 0 { continuation?.resume() }
-        else { continuation?.resume(throwing: GaugeError.message("Claude 로그인을 완료하지 못했어요. 브라우저 로그인 후 다시 시도해 주세요.")) }
+        else { continuation?.resume(throwing: failure) }
         let waiters = cancelWaiters; cancelWaiters = []
         waiters.forEach { $0.resume() }
+    }
+
+    static func loginFailure(in output: String) -> Error {
+        let output = output.lowercased()
+        if output.contains("cloudflare") || output.contains("just a moment") {
+            return GaugeError.message("Claude 로그인 서버의 보안 확인에 막혔어요. 브라우저에서 Claude가 열리는지 확인한 뒤 다시 시도해 주세요.")
+        }
+        if output.contains("keychain") || output.contains("failed to save") || output.contains("secure storage") {
+            return GaugeError.message("브라우저 로그인 정보를 Mac에 저장하지 못했어요. 키체인 승인 창을 확인하고 다시 시도해 주세요. 기존 계정과 기록은 유지됩니다.")
+        }
+        if output.contains("403") {
+            return GaugeError.message("Claude 로그인 서버가 요청을 거절했어요 (HTTP 403). 브라우저에서 계정 상태와 네트워크를 확인해 주세요.")
+        }
+        return GaugeError.message("Claude 로그인을 완료하지 못했어요. 브라우저 로그인 후 다시 시도해 주세요.")
     }
 }
 
@@ -188,6 +207,34 @@ enum ClaudeProfile {
         let profile = try LocalStorage.claudeProfile(id)
         let stored = try document(profile, allowInteraction: true)
         try save(stored, profile: profile, allowInteraction: true)
+    }
+
+    // Reauthentication uses a clean CLI profile. Only a verified login is copied
+    // into the account's existing storage, which preserves its ID and history.
+    static func install(from stagingID: UUID, to accountID: UUID, expectedIdentity: String?) throws {
+        guard stagingID != accountID else { throw GaugeError.unsupported }
+        let source = try LocalStorage.claudeProfile(stagingID)
+        let target = try LocalStorage.claudeProfile(accountID)
+        let stored = try document(source)
+        let metadata = try Data(contentsOf: source.appendingPathComponent(".claude.json"))
+        try installDocument(stored.root, metadata: metadata, profile: target, expectedIdentity: expectedIdentity) { data, service in
+            try KeychainAccess.store(data, service: service, allowInteraction: true)
+        }
+    }
+
+    static func installDocument(_ root: [String: Any], metadata: Data, profile: URL, expectedIdentity: String?,
+                                store: (Data, String) throws -> Void) throws {
+        guard let parsed = try JSONSerialization.jsonObject(with: metadata) as? [String: Any],
+              let identity = parsed["oauthAccount"] as? [String: Any],
+              let email = identity["emailAddress"] as? String, !email.isEmpty,
+              let oauth = root["claudeAiOauth"] as? [String: Any],
+              let access = oauth["accessToken"] as? String, !access.isEmpty else { throw GaugeError.unauthorized }
+        try LocalAccounts.assertIdentity(expected: expectedIdentity, actual: email)
+        let data = try JSONSerialization.data(withJSONObject: root)
+        try store(data, service(for: profile))
+        let file = profile.appendingPathComponent(".claude.json")
+        try metadata.write(to: file, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 
     @MainActor static func account(_ id: UUID) async throws -> LocalClaudeAccount {

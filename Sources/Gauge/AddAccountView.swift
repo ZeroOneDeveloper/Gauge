@@ -203,7 +203,9 @@ struct AddAccountView: View {
             do { try store.beginReauthentication(reconnecting) }
             catch { self.error = error.localizedDescription; busy = false; return }
         }
-        let id = reconnecting?.id ?? UUID()
+        // Never ask the CLI to overwrite an existing account's Keychain item.
+        // A fresh staging profile also avoids refreshing the revoked old login.
+        let id = UUID()
         let client = ClaudeConnection()
         pendingClaudeID = id
         claudeConnection = client
@@ -227,13 +229,20 @@ struct AddAccountView: View {
                 ClaudeProfile.resetPending(id)
                 let local = try await ClaudeProfile.account(id)
                 let identity = await ClaudeService.shared.identity(secret: local.accessToken, kind: .claudeCode) ?? local.email
-                let account = Account(id: id, provider: .claude,
+                if let reconnecting { try LocalAccounts.assertIdentity(expected: reconnecting.identity, actual: identity) }
+                let account = Account(id: reconnecting?.id ?? id, provider: .claude,
                                       name: String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)),
                                       identity: identity, plan: local.plan, kind: .claudeCode)
                 let snapshot = try await ClaudeService.shared.usage(account: account, secret: local.accessToken)
                 try Task.checkCancellation()
                 if let reconnecting {
+                    status = "확인된 로그인 정보를 저장하고 있어요…"
+                    try await Task.detached {
+                        try ClaudeProfile.install(from: id, to: reconnecting.id, expectedIdentity: reconnecting.identity)
+                    }.value
+                    ClaudeProfile.resetPending(reconnecting.id)
                     try store.finishReauthentication(reconnecting, replacement: account, snapshot: snapshot)
+                    try? ClaudeProfile.remove(id)
                 } else { try store.add(account, snapshot: snapshot) }
                 completed = true
                 pendingClaudeID = nil; claudeConnection = nil; loginURL = nil
@@ -289,7 +298,7 @@ struct AddAccountView: View {
         let client = connection
         let id = pendingID
         let claude = claudeConnection
-        let claudeID = reconnecting?.kind == .claudeCode ? nil : pendingClaudeID
+        let claudeID = pendingClaudeID
         connection = nil; pendingID = nil; loginURL = nil
         claudeConnection = nil; pendingClaudeID = nil; authorizationCode = ""
         Task { @MainActor in

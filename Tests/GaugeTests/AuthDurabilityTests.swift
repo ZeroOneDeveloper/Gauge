@@ -6,6 +6,51 @@ import GaugeCore
 
 @MainActor
 final class AuthDurabilityTests: XCTestCase {
+    func testRefreshDistinguishesRevokedGrantFromTemporaryProviderRejection() throws {
+        let revoked = try XCTUnwrap(ClaudeOAuthRefresh.responseError(status: 400, data: Data(#"{"error":"invalid_grant"}"#.utf8)))
+        guard case GaugeError.unauthorized = revoked else { return XCTFail("A revoked grant requires sign-in") }
+        for (status, data) in [
+            (403, #"{"cloudflare_error":true,"title":"Access denied"}"#),
+            (400, #"{"error":"temporarily_unavailable"}"#),
+            (403, #"{"error":{"type":"forbidden","message":"Do not show raw private response"}}"#)
+        ] {
+            let error = try XCTUnwrap(ClaudeOAuthRefresh.responseError(status: status, data: Data(data.utf8)))
+            if case GaugeError.unauthorized = error { XCTFail("Temporary rejection must not be labeled as a revoked login") }
+            XCTAssertFalse(error.localizedDescription.contains("private response"))
+        }
+        let limited = try XCTUnwrap(ClaudeOAuthRefresh.responseError(status: 429, data: Data(), retryAfter: "180"))
+        guard case GaugeError.rateLimited(180) = limited else { return XCTFail("Retry-after must be honored") }
+        XCTAssertNil(ClaudeOAuthRefresh.responseError(status: 200, data: Data()))
+    }
+
+    func testInstallingVerifiedStagedLoginKeepsAccountProfileAndRejectsAnotherIdentity() throws {
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("gauge-install-\(UUID())")
+        try LocalStorage.prepare(profile)
+        defer { try? FileManager.default.removeItem(at: profile) }
+        let original = profile.appendingPathComponent(".claude.json")
+        let old = Data(#"{"oauthAccount":{"emailAddress":"saved@example.com"},"old":true}"#.utf8)
+        try old.write(to: original)
+        let root: [String: Any] = ["claudeAiOauth": ["accessToken": "fixture-new", "refreshToken": "fixture-refresh"]]
+        var writes = 0
+        let wrong = Data(#"{"oauthAccount":{"emailAddress":"other@example.com"}}"#.utf8)
+        XCTAssertThrowsError(try ClaudeProfile.installDocument(root, metadata: wrong, profile: profile, expectedIdentity: "saved@example.com") { _, _ in writes += 1 })
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try Data(contentsOf: original), old)
+        let fresh = Data(#"{"oauthAccount":{"emailAddress":"SAVED@example.com"},"fresh":true}"#.utf8)
+        enum WriteFailure: Error { case denied }
+        XCTAssertThrowsError(try ClaudeProfile.installDocument(root, metadata: fresh, profile: profile, expectedIdentity: "saved@example.com") { _, _ in throw WriteFailure.denied })
+        XCTAssertEqual(try Data(contentsOf: original), old)
+        try ClaudeProfile.installDocument(root, metadata: fresh, profile: profile, expectedIdentity: "saved@example.com") { data, service in
+            let saved = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            XCTAssertEqual((saved?["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String, "fixture-new")
+            XCTAssertEqual(service, ClaudeProfile.service(for: profile))
+            writes += 1
+        }
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(try Data(contentsOf: original), fresh)
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: original.path)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
     func testConcurrentAuthorizationIsBusyRatherThanARevokedGrant() async throws {
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)

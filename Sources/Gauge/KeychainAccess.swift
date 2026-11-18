@@ -56,6 +56,26 @@ enum KeychainAccess {
         try check(status)
     }
 
+    static func store(_ data: Data, service: String, allowInteraction: Bool = false) throws {
+        try withInteractionPolicy(allowInteraction: allowInteraction) {
+            let request = query(service: service, allowInteraction: allowInteraction)
+            let status = SecItemUpdate(request as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            guard status == errSecItemNotFound else { try check(status); return }
+            var item: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: NSUserName(),
+                kSecAttrLabel as String: "Gauge Claude 로그인",
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                kSecValueData as String: data,
+            ]
+            if let context = request[kSecUseAuthenticationContext as String] {
+                item[kSecUseAuthenticationContext as String] = context
+            }
+            try check(SecItemAdd(item as CFDictionary, nil))
+        }
+    }
+
     private static func check(_ status: OSStatus) throws {
         switch status {
         case errSecSuccess: return

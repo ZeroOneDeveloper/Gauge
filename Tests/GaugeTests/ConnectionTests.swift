@@ -126,6 +126,21 @@ final class ConnectionTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 3)
     }
 
+    func testClaudeLoginFailureExplainsStorageFailureWithoutExposingOutput() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("failed-login.sh")
+        try "#!/bin/sh\nprintf '%s\\n' 'Failed to save OAuth tokens to Keychain; fixture-private' >&2\nexit 1\n"
+            .write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        let client = ClaudeConnection(executableOverride: script)
+        do { try await client.login(profile: directory); XCTFail("Expected storage failure") }
+        catch {
+            XCTAssertTrue(error.localizedDescription.contains("저장하지 못했어요"))
+            XCTAssertFalse(error.localizedDescription.contains("fixture-private"))
+        }
+    }
+
     func testClaudeLoginTimeoutFinishesAndRejectsUntrustedAuthorizationLinks() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

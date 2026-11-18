@@ -23,7 +23,7 @@ macOS 14 이상에서 실행됩니다. Universal 앱 하나로 Apple Silicon과 
 
 ZIP 파일은 [Releases](https://github.com/ZeroOneDeveloper/Gauge/releases)에서 받을 수 있으며 `SHA256SUMS.txt`로 다운로드 파일의 무결성을 확인할 수 있습니다.
 
-배포 파일은 Developer ID로 서명했습니다. **v1.1.0은 Apple 공증을 아직 완료하지 않았습니다.** 첫 실행이 차단되면 **시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기(Open Anyway)**를 선택하세요. [Apple의 첫 실행 안내](https://support.apple.com/102445)를 참고할 수 있습니다.
+배포 파일은 Developer ID로 서명했습니다. **v1.1.1은 Apple 공증을 아직 완료하지 않았습니다.** 첫 실행이 차단되면 **시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기(Open Anyway)**를 선택하세요. [Apple의 첫 실행 안내](https://support.apple.com/102445)를 참고할 수 있습니다.
 
 기존 사용자는 Gauge를 종료한 뒤 응용 프로그램 폴더의 앱을 교체하세요. 연결한 계정과 사용량 기록은 그대로 사용합니다. 로그인할 때 앱을 시작하려면 Gauge의 **설정 → Mac 로그인 시 자동 실행**을 켜세요.
 
@@ -71,6 +71,8 @@ Claude Code를 이용할 수 없으면 **sessionKey / OAuth 토큰으로 직접 
 `sk-ant-oat…` 형식의 Claude OAuth 액세스 토큰 또는 `claudeAiOauth.accessToken`이 있는 Claude Code 인증 JSON 파일도 가져올 수 있습니다. 사용량 조회에는 `user:profile` 권한이 필요합니다. 일반 API 키나 추론 전용 `setup-token`으로 구독 한도를 조회할 수 없습니다. 가져온 OAuth 토큰은 복사본이므로 만료 시 직접 다시 가져와야 합니다. 원래 CLI의 refresh token을 회전시키거나 인증 파일을 수정하지 않습니다.
 
 Claude 조회는 `claude.ai/api/organizations/{id}/usage` 또는 `api.anthropic.com/api/oauth/usage`의 **비공개 인터페이스**를 사용합니다. 공급자 변경, 세션 만료, Cloudflare 확인에 따라 연결이 실패할 수 있으며 해당 상태를 화면에 표시합니다. 브라우저로 로그인한 계정은 전용 프로필에서 자동 갱신합니다. 갱신이 거절되면 계정 관리의 **다시 로그인**으로 같은 계정을 복구할 수 있습니다. 계정 식별자, 이름, 고정 및 기존 기록을 유지하며 다른 이메일로 로그인하면 반영하지 않습니다. 이 Mac의 기존 Claude 로그인도 이 방법으로 Gauge 전용 로그인으로 전환할 수 있습니다.
+
+v1.1.1부터 재로그인은 새 임시 프로필에서 진행합니다. 이메일과 실제 사용량을 확인한 뒤 기존 계정의 인증 저장소에 반영하므로, 이전 인증의 만료나 저장 문제로 재로그인이 반복되는 상황을 줄입니다. 인증 서버의 일시적인 거절·보안 확인과 갱신 토큰 만료를 구분하며, 키체인 저장 실패도 별도로 안내합니다.
 
 ### Codex
 
