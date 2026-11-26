@@ -308,6 +308,7 @@ struct LimitResetRow: View {
     let inventory: LimitResetInventory
     let now: Date
     let stale: Bool
+    @State private var showsDetails = false
 
     var body: some View {
         let general = inventory.availableGrants(at: now, fable: false)
@@ -319,23 +320,38 @@ struct LimitResetRow: View {
             stale ? "마지막 확인값" : nil,
             expiryDetail("일반권", grants: general),
             expiryDetail("Fable 사용권", grants: fable),
-        ].compactMap { $0 }.joined(separator: "\n")
+        ].compactMap { $0 }
 
-        HStack(spacing: 6) {
-            Text("리셋 사용권").foregroundStyle(Palette.secondary)
-            Text(counts).fontWeight(.semibold).monospacedDigit()
-                .foregroundStyle(stale ? Palette.secondary : Palette.ink)
-            if !details.isEmpty {
-                Image(systemName: stale ? "clock" : "info.circle")
-                    .font(.system(size: 11)).foregroundStyle(Palette.secondary)
-                    .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("리셋 사용권").foregroundStyle(Palette.secondary)
+                    Text(counts).fontWeight(.semibold).monospacedDigit()
+                        .foregroundStyle(stale ? Palette.secondary : Palette.ink)
+                }
+                .font(.system(size: 13)).lineLimit(1)
+                .accessibilityElement(children: .combine)
+
+                if !details.isEmpty {
+                    Button {
+                        showsDetails.toggle()
+                    } label: {
+                        Image(systemName: showsDetails ? "info.circle.fill" : "info.circle")
+                            .font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(showsDetails ? "리셋 사용권 상세 닫기" : "리셋 사용권 상세 보기")
+                    .accessibilityLabel(showsDetails ? "리셋 사용권 상세 닫기" : "리셋 사용권 상세 보기")
+                }
+            }
+            if showsDetails, !details.isEmpty {
+                Text(details.joined(separator: "\n"))
+                    .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                    .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .font(.system(size: 13))
-        .lineLimit(1)
-        .help(details)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(Text(details))
     }
 
     private func expiryDetail(_ name: String, grants: [LimitResetGrant]) -> String? {
