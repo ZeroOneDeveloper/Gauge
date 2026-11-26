@@ -69,6 +69,61 @@ final class UsageTests: XCTestCase {
         XCTAssertThrowsError(try UsageParser.claude(Data(#"{"five_hour":null}"#.utf8)))
         XCTAssertThrowsError(try UsageParser.codex(Data(#"{"rateLimits":{"primary":null}}"#.utf8)))
     }
+    func testGeminiReadsOnlyReportedBucketsFromBuiltInUsageCommand() throws {
+        let data = Data("""
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[
+          {"name":"Gemini Models","buckets":[
+            {"id":"gemini-weekly","window":"weekly","remaining_fraction":0.75,"reset_time":"2026-12-03T08:26:05Z"},
+            {"id":"gemini-5h","window":"5h","remaining_fraction":1,"reset_time":"1970-01-01T00:00:00Z"},
+            {"id":"missing","window":"5h","remaining_amount":1},
+            {"id":"disabled","remaining_fraction":0,"disabled":true},
+            {"id":"malformed","remaining_fraction":true}
+          ]},
+          {"name":"Claude and GPT models","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":0}]}
+        ]}}}
+        """.utf8)
+        let windows = try UsageParser.gemini(data).windows
+        XCTAssertEqual(windows.map(\.id), ["gemini-weekly", "gemini-5h", "3p-weekly"])
+        XCTAssertEqual(windows.map(\.usedPercent), [25, 0, 100])
+        XCTAssertEqual(windows.map(\.durationMinutes), [10080, 300, 10080])
+        XCTAssertNotNil(windows[0].resetsAt)
+        XCTAssertNil(windows[1].resetsAt)
+        XCTAssertEqual(windows[2].title, "Claude·GPT · 주간")
+        XCTAssertThrowsError(try UsageParser.gemini(Data(#"{"status":"SUCCESS","num_turns":1,"response":"100% remaining"}"#.utf8)))
+    }
+    func testClaudeResetCreditsKeepScopesAndNeverRetainRedemptionHandles() throws {
+        let now = try XCTUnwrap(UsageParser.date("2026-11-26T00:00:00Z"))
+        let data = Data("""
+        {"seven_day":{"utilization":30},"cedar_ember":{"eligible":true,"grants":[
+          {"id":"private-grant","resets_left":1,"paused":false,"ends_at":"2026-12-10T22:00:00Z","clears":["seven_day"]},
+          {"resets_left":3,"paused":false,"ends_at":"2027-03-09T07:59:00Z","clears":["five_hour","seven_day_overage_included"]},
+          {"resets_left":1,"paused":false,"ends_at":"2026-11-01T00:00:00Z"},
+          {"resets_left":1,"paused":true},
+          {"resets_left":1,"paused":false,"starts_at":"2027-01-01T00:00:00Z"}
+        ]}}
+        """.utf8)
+        let snapshot = try UsageParser.claude(data, now: now)
+        let inventory = try XCTUnwrap(snapshot.limitResets)
+        XCTAssertEqual(inventory.availableGrants(at: now, fable: false).map(\.count), [1])
+        XCTAssertEqual(inventory.availableGrants(at: now, fable: true).map(\.count), [3])
+        XCTAssertTrue(inventory.availableGrants(at: now.addingTimeInterval(30 * 86400), fable: false).isEmpty)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self).contains("private-grant"))
+        let ineligible = Data(#"{"seven_day":{"utilization":30},"cedar_ember":{"eligible":false,"grants":[]}}"#.utf8)
+        XCTAssertNil(try UsageParser.claude(ineligible, now: now).limitResets)
+    }
+    func testCodexResetCountRemainsAvailableWhenDetailsAreIncomplete() throws {
+        let data = Data("""
+        {"rateLimitResetCredits":{"availableCount":3,"credits":[
+          {"status":"available","expiresAt":1796940000},
+          {"status":"consumed","expiresAt":null}
+        ]}}
+        """.utf8)
+        let inventory = try XCTUnwrap(UsageParser.codex(data).limitResets)
+        XCTAssertEqual(inventory.grants.count, 1)
+        XCTAssertEqual(inventory.unlistedCount, 2)
+        let zero = Data(#"{"rateLimitResetCredits":{"availableCount":0,"credits":null}}"#.utf8)
+        XCTAssertNotNil(try UsageParser.codex(zero).limitResets)
+    }
     func testCodexPrefersMultipleBucketsAndPreservesActualDuration() throws {
         let data = Data(#"{"rateLimits":{"primary":{"usedPercent":99,"windowDurationMins":300}},"rateLimitsByLimitId":{"codex":{"planType":"pro","primary":{"usedPercent":25,"windowDurationMins":15,"resetsAt":1792400400},"secondary":{"usedPercent":70,"windowDurationMins":10080}},"review":{"limitName":"Code review","primary":{"usedPercent":5,"windowDurationMins":10080}}}}"#.utf8)
         let snapshot = try UsageParser.codex(data)

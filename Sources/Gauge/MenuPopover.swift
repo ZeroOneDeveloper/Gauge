@@ -93,6 +93,10 @@ struct MenuPopover: View {
                                     if let credits = snapshot.usageCredits {
                                         UsageCreditsRow(credits: credits, stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
                                     }
+                                    if let resets = snapshot.limitResets {
+                                        LimitResetRows(inventory: resets, now: store.now,
+                                                       stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                                    }
                                     Text(failed ? "갱신 실패 · 마지막 확인값" : UsageFormatting.age(snapshot.fetchedAt, now: store.now))
                                         .font(.system(size: 12)).foregroundStyle(failed ? Palette.red : Palette.secondary)
                                 } else {

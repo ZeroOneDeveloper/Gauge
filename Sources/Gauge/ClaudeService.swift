@@ -8,7 +8,17 @@ struct ClaudeOrganization: Identifiable {
 
 final class ClaudeService {
     static let shared = ClaudeService()
+    private struct ResetQueryRejected: Error {}
     private let session: URLSession
+    private let cliVersion = Task<String?, Never> {
+        guard let executable = ClaudeConnection.executable(),
+              let result = try? await LocalCLI.run(executable, ["--version"], in: FileManager.default.temporaryDirectory,
+                                                   timeout: .seconds(5)),
+              result.status == 0,
+              let version = String(decoding: result.output, as: UTF8.self).split(whereSeparator: \.isWhitespace).first,
+              version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else { return nil }
+        return String(version)
+    }
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
@@ -42,12 +52,16 @@ final class ClaudeService {
         return (value, .claudeSession)
     }
 
-    private func get(_ path: String, secret: String, kind: ConnectionKind) async throws -> Data {
+    private func get(_ path: String, secret: String, kind: ConnectionKind, includeResets: Bool = false) async throws -> Data {
         let host = kind.usesClaudeOAuth ? "https://api.anthropic.com" : "https://claude.ai"
-        guard let url = URL(string: host + path) else { throw GaugeError.unsupported }
+        guard let url = URL(string: host + path + (includeResets ? "?cedar_ember=1" : "")) else { throw GaugeError.unsupported }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Gauge/\(GaugeVersion.current) (macOS; usage monitor)", forHTTPHeaderField: "User-Agent")
+        let userAgent: String
+        if includeResets, kind.usesClaudeOAuth, let version = await cliVersion.value {
+            userAgent = "claude-cli/\(version) (external, cli)"
+        } else { userAgent = "Gauge/\(GaugeVersion.current) (macOS; usage monitor)" }
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         if kind.usesClaudeOAuth {
             request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -57,12 +71,14 @@ final class ClaudeService {
         guard let http = response as? HTTPURLResponse else { throw GaugeError.unsupported }
         switch http.statusCode {
         case 200...299: break
+        case 400 where includeResets: throw ResetQueryRejected()
         case 401: throw GaugeError.unauthorized
         case 403:
             let body = String(data: data, encoding: .utf8)?.lowercased() ?? ""
             if body.contains("cloudflare") || body.contains("just a moment") || body.contains("challenge") {
                 throw GaugeError.message("Claude 웹 보안 확인으로 조회가 차단되었어요. 브라우저에서 claude.ai를 확인하거나 Claude Code OAuth 토큰으로 연결해 주세요.")
             }
+            if includeResets, !body.contains("scope"), !body.contains("oauth_not_allowed") { throw ResetQueryRejected() }
             throw GaugeError.message("Claude가 접근을 거절했어요. 세션 만료 또는 OAuth의 user:profile 권한을 확인하고 다시 연결해 주세요.")
         case 429: throw GaugeError.rateLimited(Int(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 120)
         default: throw GaugeError.message("Claude 응답 오류 (HTTP \(http.statusCode)). 잠시 후 다시 시도합니다.")
@@ -97,6 +113,9 @@ final class ClaudeService {
             }
             path = "/api/organizations/\(org)/usage"
         }
-        return try UsageParser.claude(await get(path, secret: secret, kind: account.kind))
+        let data: Data
+        do { data = try await get(path, secret: secret, kind: account.kind, includeResets: true) }
+        catch is ResetQueryRejected { data = try await get(path, secret: secret, kind: account.kind) }
+        return try UsageParser.claude(data)
     }
 }

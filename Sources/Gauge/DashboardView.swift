@@ -145,7 +145,7 @@ struct OverviewView: View {
             }
             HStack(spacing: 13) {
                 MetricCard(title: "연결된 계정", value: "\(store.accounts.count)", unit: "개", icon: "person.2", tint: Palette.ink,
-                           detail: "Claude · Codex")
+                           detail: "Claude · Codex · Gemini")
                 MetricCard(title: "여유 있는 계정", value: "\(validSnapshots.filter { ($0.1.currentPeak(at: store.now)?.usedPercent ?? 100) < 75 }.count)", unit: "개", icon: "checkmark.circle", tint: Palette.green,
                            detail: "모든 사용 한도 75% 미만")
                 MetricCard(title: "확인이 필요한 계정", value: "\(store.accounts.count - validSnapshots.filter { ($0.1.currentPeak(at: store.now)?.usedPercent ?? 100) < 75 }.count)", unit: "개", icon: "flag", tint: Palette.amber,
@@ -256,6 +256,10 @@ struct AccountCard: View {
                         if let credits = snapshot.usageCredits {
                             UsageCreditsRow(credits: credits, stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
                         }
+                        if let resets = snapshot.limitResets {
+                            LimitResetRows(inventory: resets, now: store.now,
+                                           stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                        }
                     }
                 } else {
                     Text("사용량 정보를 기다리고 있어요").font(.system(size: 14)).foregroundStyle(Palette.secondary).frame(height: 85)
@@ -299,6 +303,40 @@ struct UsageCreditsRow: View {
     }
 }
 
+struct LimitResetRows: View {
+    let inventory: LimitResetInventory
+    let now: Date
+    let stale: Bool
+
+    var body: some View {
+        let general = inventory.availableGrants(at: now, fable: false)
+        let fable = inventory.availableGrants(at: now, fable: true)
+        VStack(alignment: .leading, spacing: 8) {
+            if !general.isEmpty || inventory.unlistedCount > 0 || fable.isEmpty {
+                row("리셋 사용권", grants: general, unlisted: inventory.unlistedCount)
+            }
+            if !fable.isEmpty { row("Fable 리셋 사용권", grants: fable) }
+            if stale {
+                Text("마지막 확인값").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            }
+        }
+    }
+
+    private func row(_ title: String, grants: [LimitResetGrant], unlisted: Int = 0) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title).font(.system(size: 14, weight: .medium))
+                Spacer(minLength: 8)
+                Text("\(grants.reduce(unlisted) { $0 + $1.count })개 남음").font(.system(size: 14, weight: .semibold)).monospacedDigit()
+            }
+            if let expiry = grants.compactMap(\.expiresAt).min() {
+                Text("가장 가까운 만료 \(expiry.formatted(.dateTime.month().day().hour().minute()))")
+                    .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            }
+        }.accessibilityElement(children: .combine)
+    }
+}
+
 struct UsageWindowRow: View {
     var window: UsageWindow
     var fetchedAt: Date
@@ -331,10 +369,11 @@ struct EmptyAccountsView: View {
         VStack(spacing: 15) {
             HStack(spacing: -6) {
                 ProviderMark(provider: .claude, size: 48).rotationEffect(.degrees(-9))
-                ProviderMark(provider: .codex, size: 48).rotationEffect(.degrees(9)).offset(y: 4)
+                ProviderMark(provider: .codex, size: 48).offset(y: -2)
+                ProviderMark(provider: .gemini, size: 48).rotationEffect(.degrees(9)).offset(y: 4)
             }.padding(.bottom, 5)
             Text("첫 계정을 연결해 볼까요?").font(.system(size: 19, weight: .semibold))
-            Text("Claude와 Codex의 구독 사용량을\n앱을 오가지 않고 한곳에서 확인하세요.")
+            Text("Claude, Codex, Gemini 사용량을\n한곳에서 확인하세요.")
                 .font(.system(size: 14)).foregroundStyle(Palette.secondary).lineSpacing(5).multilineTextAlignment(.center)
             HStack(spacing: 9) {
                 Button { store.showAddAccount = true } label: { Label("계정 연결하기", systemImage: "plus") }.buttonStyle(PrimaryButtonStyle())

@@ -27,7 +27,8 @@ struct AccountsView: View {
                                         Text(account.name).font(.system(size: 15, weight: .semibold))
                                         Text(account.provider.title).font(.system(size: 12)).foregroundStyle(Palette.secondary)
                                     }
-                                    Text(account.identity ?? account.organizationName ?? "인증된 구독 계정").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                                    Text(account.identity ?? account.organizationName ?? (account.provider == .gemini ? "현재 Antigravity CLI 로그인" : "인증된 구독 계정"))
+                                        .font(.system(size: 12)).foregroundStyle(Palette.secondary)
                                     if let error = store.errors[account.id] {
                                         Text(error).font(.system(size: 12)).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true)
                                         if account.kind == .claudeLocal {
@@ -52,7 +53,9 @@ struct AccountsView: View {
                                     .help("\(account.provider.title) 전체 계정의 잔여 한도 고정").accessibilityLabel("\(account.provider.title) 전체 계정 고정")
                                 Menu {
                                     Button("이름 변경") { editing = account }
-                                    Button("서비스 사용량 페이지 열기") { NSWorkspace.shared.open(account.provider.usageURL) }
+                                    Button(account.provider == .gemini ? "Antigravity 사용량 안내 열기" : "서비스 사용량 페이지 열기") {
+                                        NSWorkspace.shared.open(account.provider.usageURL)
+                                    }
                                     Button("새로고침") { Task { await store.refreshAll() } }.disabled(store.isRefreshing)
                                     if account.provider == .claude {
                                         Button("키체인 접근 허용…") { Task { await store.authorizeKeychain(account) } }

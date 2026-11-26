@@ -54,7 +54,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         button.title = hasAccounts ? " " + store.menuLabel : ""
         button.toolTip = hasAccounts
             ? "Gauge · \(store.pinnedProvider?.title ?? "계정") 전체 잔여 한도 · 계정당 100% 기준 · 클릭하여 기간별 합계 확인"
-            : "Gauge · 클릭하여 Claude·Codex 계정 연결"
+            : "Gauge · 클릭하여 계정 연결"
         let rowsHeight = store.accounts.reduce(CGFloat(32)) { total, account in
             let snapshot = store.snapshots[account.id.uuidString]
             return total + 105 + CGFloat(snapshot?.windows.count ?? 1) * 65 + (snapshot?.usageCredits == nil ? 0 : 65)

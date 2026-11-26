@@ -11,7 +11,13 @@ enum Palette {
     static let amber = Color(hex: 0xD9A13E)
     static let red = Color(hex: 0xDA6A67)
     static let sidebar = Color(hex: 0x202832)
-    static func provider(_ provider: Provider) -> Color { provider == .claude ? accent : Color(hex: 0x617BC7) }
+    static func provider(_ provider: Provider) -> Color {
+        switch provider {
+        case .claude: accent
+        case .codex: Color(hex: 0x617BC7)
+        case .gemini: Color(hex: 0x8861C5)
+        }
+    }
     static func usage(_ percent: Double) -> Color { percent >= 90 ? red : percent >= 75 ? amber : green }
 }
 
@@ -55,11 +61,18 @@ struct ProviderMark: View {
     var provider: Provider
     var size: CGFloat = 44
     var body: some View {
-        Image(nsImage: ProviderArtwork.image(for: provider))
-        .resizable()
-        .interpolation(.high)
-        .scaledToFit()
-        .frame(width: size * (provider == .claude ? 0.68 : 0.84), height: size * (provider == .claude ? 0.68 : 0.84))
+        Group {
+            if provider == .gemini {
+                Image(systemName: "sparkles").font(.system(size: size * 0.56, weight: .semibold))
+                    .foregroundStyle(Palette.provider(provider))
+            } else {
+                Image(nsImage: ProviderArtwork.image(for: provider))
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: size * (provider == .claude ? 0.68 : 0.84), height: size * (provider == .claude ? 0.68 : 0.84))
+            }
+        }
         .frame(width: size, height: size)
         .background(Palette.provider(provider).opacity(0.1), in: RoundedRectangle(cornerRadius: size * 0.29))
         .accessibilityLabel(provider.title)
@@ -67,7 +80,7 @@ struct ProviderMark: View {
 }
 
 private enum ProviderArtwork {
-    private static let images: [Provider: NSImage] = Dictionary(uniqueKeysWithValues: Provider.allCases.map { provider in
+    private static let images: [Provider: NSImage] = Dictionary(uniqueKeysWithValues: [Provider.claude, .codex].map { provider in
         // CoreSVG misrenders the compact arc commands in the Codex SVG. Its PDF
         // is generated from that same SVG with librsvg and retains vector paths.
         let fileExtension = provider == .codex ? "pdf" : "svg"

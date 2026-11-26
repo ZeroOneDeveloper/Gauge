@@ -112,7 +112,8 @@ final class AppStore: ObservableObject {
         defer { refreshing.remove(account.id) }
         do {
             let snapshot: UsageSnapshot
-            if account.provider == .claude {
+            switch account.provider {
+            case .claude:
                 let secret: String
                 if account.kind == .claudeLocal {
                     let local = try await ClaudeLocalAuth.shared.account(expectedIdentity: account.identity)
@@ -123,7 +124,7 @@ final class AppStore: ObservableObject {
                     secret = local.accessToken
                 } else { secret = try CredentialVault.read(account.id) }
                 snapshot = try await ClaudeService.shared.usage(account: account, secret: secret)
-            } else {
+            case .codex:
                 let connection = CodexConnection()
                 defer { connection.close() }
                 let local = account.kind == .codexLocal
@@ -131,6 +132,8 @@ final class AppStore: ObservableObject {
                 guard let info = try await connection.account() else { throw GaugeError.unauthorized }
                 if local { try LocalAccounts.assertIdentity(expected: account.identity, actual: info.email) }
                 snapshot = try await connection.usage()
+            case .gemini:
+                snapshot = try await GeminiService.usage()
             }
             guard state.accounts.contains(where: { $0.id == account.id }) else { return }
             try record(snapshot, account: account)
@@ -231,6 +234,9 @@ final class AppStore: ObservableObject {
     }
 
     func add(_ account: Account, snapshot: UsageSnapshot) throws {
+        if account.kind == .geminiLocal, state.accounts.contains(where: { $0.kind == .geminiLocal }) {
+            throw GaugeError.message("이 Mac의 Antigravity CLI가 이미 연결되어 있어요.")
+        }
         if let identity = account.identity, !identity.isEmpty,
            state.accounts.contains(where: {
                $0.provider == account.provider && $0.identity?.caseInsensitiveCompare(identity) == .orderedSame &&

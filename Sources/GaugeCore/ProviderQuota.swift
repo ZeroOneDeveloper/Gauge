@@ -48,8 +48,8 @@ public enum ProviderQuota {
     }
 
     public static func menuWindow(_ windows: [CombinedQuota]) -> CombinedQuota? {
-        windows.first { $0.id == "seven_day" || $0.id == "codex.10080" }
-            ?? windows.first { $0.id == "five_hour" || $0.id == "codex.300" }
+        windows.first { ["seven_day", "codex.10080", "gemini-weekly"].contains($0.id) }
+            ?? windows.first { ["five_hour", "codex.300", "gemini-5h"].contains($0.id) }
             ?? windows.first
     }
 }

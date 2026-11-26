@@ -20,7 +20,7 @@ final class ClaudeConnection {
     private let executableOverride: URL?
     init(executableOverride: URL? = nil) { self.executableOverride = executableOverride }
 
-    static func executable() -> URL? {
+    nonisolated static func executable() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let candidates = [home.appendingPathComponent(".local/bin/claude").path,
                           "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
@@ -203,10 +203,10 @@ enum ClaudeProfile {
         }
     }
 
-    static func authorize(_ id: UUID) throws {
+    static func authorize(_ id: UUID, allowInteraction: Bool = true) throws {
         let profile = try LocalStorage.claudeProfile(id)
-        let stored = try document(profile, allowInteraction: true)
-        try save(stored, profile: profile, allowInteraction: true)
+        let stored = try document(profile, allowInteraction: allowInteraction)
+        try save(stored, profile: profile, allowInteraction: allowInteraction)
     }
 
     // Reauthentication uses a clean CLI profile. Only a verified login is copied
@@ -218,7 +218,8 @@ enum ClaudeProfile {
         let stored = try document(source)
         let metadata = try Data(contentsOf: source.appendingPathComponent(".claude.json"))
         try installDocument(stored.root, metadata: metadata, profile: target, expectedIdentity: expectedIdentity) { data, service in
-            try KeychainAccess.store(data, service: service, allowInteraction: true)
+            do { try KeychainAccess.store(data, service: service) }
+            catch GaugeError.keychainAccessRequired { try KeychainAccess.store(data, service: service, allowInteraction: true) }
         }
     }
 
@@ -268,9 +269,11 @@ enum ClaudeProfile {
                                   plan: oauth["subscriptionType"] as? String, accountID: identity?["accountUuid"] as? String, expired: false)
     }
 
-    static func remove(_ id: UUID) throws {
+    static func remove(_ id: UUID, allowInteraction: Bool = true) throws {
         let profile = try LocalStorage.claudeProfile(id)
-        let status = SecItemDelete(query(profile) as CFDictionary)
+        let status = try KeychainAccess.withInteractionPolicy(allowInteraction: allowInteraction) {
+            SecItemDelete(query(profile) as CFDictionary)
+        }
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw GaugeError.message("Claude 전용 로그인 정보를 키체인에서 삭제하지 못했어요.")
         }

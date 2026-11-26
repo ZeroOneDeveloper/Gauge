@@ -1,17 +1,23 @@
 import Foundation
 
 public enum Provider: String, Codable, CaseIterable, Identifiable {
-    case claude, codex
+    case claude, codex, gemini
     public var id: String { rawValue }
-    public var title: String { self == .claude ? "Claude" : "Codex" }
+    public var title: String {
+        switch self { case .claude: "Claude"; case .codex: "Codex"; case .gemini: "Gemini" }
+    }
     public var usageURL: URL {
-        URL(string: self == .claude ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage")!
+        switch self {
+        case .claude: URL(string: "https://claude.ai/settings/usage")!
+        case .codex: URL(string: "https://chatgpt.com/codex/settings/usage")!
+        case .gemini: URL(string: "https://antigravity.google/docs/cli/commands/usage")!
+        }
     }
 }
 
 public enum ConnectionKind: String, Codable {
-    case claudeSession, claudeOAuth, codex, claudeLocal, codexLocal, claudeCode
-    public var isLocal: Bool { self == .claudeLocal || self == .codexLocal }
+    case claudeSession, claudeOAuth, codex, claudeLocal, codexLocal, claudeCode, geminiLocal
+    public var isLocal: Bool { self == .claudeLocal || self == .codexLocal || self == .geminiLocal }
     public var usesClaudeOAuth: Bool { self == .claudeOAuth || self == .claudeLocal || self == .claudeCode }
 }
 
@@ -31,7 +37,14 @@ public struct Account: Codable, Identifiable, Equatable {
                 kind: ConnectionKind? = nil, createdAt: Date = Date()) {
         self.id = id; self.provider = provider; self.name = name; self.identity = identity
         self.plan = plan; self.organizationID = organizationID; self.organizationName = organizationName
-        self.kind = kind ?? (provider == .codex ? .codex : .claudeSession)
+        if let kind { self.kind = kind }
+        else {
+            switch provider {
+            case .claude: self.kind = .claudeSession
+            case .codex: self.kind = .codex
+            case .gemini: self.kind = .geminiLocal
+            }
+        }
         self.createdAt = createdAt
     }
 }
@@ -86,13 +99,31 @@ public struct UsageCredits: Codable, Equatable {
     }
 }
 
+public struct LimitResetGrant: Codable, Equatable {
+    public var count: Int
+    public var expiresAt: Date?
+    public var fable: Bool = false
+}
+
+public struct LimitResetInventory: Codable, Equatable {
+    public var grants: [LimitResetGrant]
+    public var unlistedCount: Int = 0
+
+    public func availableGrants(at date: Date, fable: Bool) -> [LimitResetGrant] {
+        grants.filter { $0.fable == fable && ($0.expiresAt.map { $0 > date } ?? true) }
+    }
+}
+
 public struct UsageSnapshot: Codable, Equatable {
     public var windows: [UsageWindow]
     public var fetchedAt: Date
     public var plan: String?
     public var usageCredits: UsageCredits?
-    public init(windows: [UsageWindow], fetchedAt: Date = Date(), plan: String? = nil, usageCredits: UsageCredits? = nil) {
-        self.windows = windows; self.fetchedAt = fetchedAt; self.plan = plan; self.usageCredits = usageCredits
+    public var limitResets: LimitResetInventory?
+    public init(windows: [UsageWindow], fetchedAt: Date = Date(), plan: String? = nil, usageCredits: UsageCredits? = nil,
+                limitResets: LimitResetInventory? = nil) {
+        self.windows = windows; self.fetchedAt = fetchedAt; self.plan = plan
+        self.usageCredits = usageCredits; self.limitResets = limitResets
     }
     public var peak: UsageWindow? { windows.max { $0.usedPercent < $1.usedPercent } }
     public func currentPeak(at now: Date = Date()) -> UsageWindow? {

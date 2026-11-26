@@ -82,12 +82,13 @@ public enum UsageParser {
         }
 
         let credits = claudeCredits(json["extra_usage"])
-        guard !windows.isEmpty || credits != nil else { throw GaugeError.unsupported }
+        let resets = claudeResets(json["cedar_ember"], now: now)
+        guard !windows.isEmpty || credits != nil || resets != nil else { throw GaugeError.unsupported }
         // Keep the general usage rows first regardless of which format supplied them.
         let general = ["five_hour", "seven_day"]
         let ordered = general.compactMap { id in windows.first { $0.id == id } }
             + windows.filter { !general.contains($0.id) }
-        return UsageSnapshot(windows: ordered, fetchedAt: now, usageCredits: credits)
+        return UsageSnapshot(windows: ordered, fetchedAt: now, usageCredits: credits, limitResets: resets)
     }
 
     private static func label(_ value: Any?) -> String? {
@@ -112,11 +113,91 @@ public enum UsageParser {
                             usedPercent: percent.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil })
     }
 
+    private static func claudeResets(_ raw: Any?, now: Date) -> LimitResetInventory? {
+        guard let block = raw as? [String: Any], boolean(block["eligible"]) == true,
+              let rows = block["grants"] as? [Any], rows.count <= 200 else { return nil }
+        var grants: [LimitResetGrant] = []
+        var count = 0
+        for element in rows {
+            guard let row = element as? [String: Any], let remaining = resetCount(row["resets_left"]),
+                  let paused = boolean(row["paused"]) else { return nil }
+            if row["resets_total"] != nil, !(row["resets_total"] is NSNull) {
+                guard let total = resetCount(row["resets_total"]), remaining <= total else { return nil }
+            }
+            let start = date(row["starts_at"]), end = date(row["ends_at"])
+            for (key, parsed) in [("starts_at", start), ("ends_at", end)] {
+                if let value = row[key], !(value is NSNull), parsed == nil { return nil }
+            }
+            guard remaining > 0, !paused, start.map({ $0 <= now }) ?? true, end.map({ $0 > now }) ?? true else { continue }
+            let clears = row["clears"] as? [String] ?? []
+            let fable = clears.contains("seven_day_overage_included") && !clears.contains("seven_day")
+            count += remaining
+            guard count <= 200 else { return nil }
+            grants.append(LimitResetGrant(count: remaining, expiresAt: end, fable: fable))
+        }
+        return LimitResetInventory(grants: grants)
+    }
+
+    private static func codexResets(_ raw: Any?) -> LimitResetInventory? {
+        guard let block = raw as? [String: Any], let total = resetCount(block["availableCount"]) else { return nil }
+        let rows = block["credits"] as? [[String: Any]] ?? []
+        let grants = rows.filter { $0["status"] as? String == "available" }.prefix(total)
+            .map { LimitResetGrant(count: 1, expiresAt: date($0["expiresAt"])) }
+        return LimitResetInventory(grants: grants, unlistedCount: total - grants.count)
+    }
+
+    private static func resetCount(_ raw: Any?) -> Int? {
+        guard let value = number(raw), (0...10_000).contains(value), value.rounded(.towardZero) == value else { return nil }
+        return Int(value)
+    }
+
+    private static func boolean(_ raw: Any?) -> Bool? {
+        guard let value = raw as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+        return value.boolValue
+    }
+
     public static func codex(_ data: Data, now: Date = Date()) throws -> UsageSnapshot {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw GaugeError.unsupported }
         return try codex(json, now: now)
     }
+
+    public static func gemini(_ data: Data, now: Date = Date()) throws -> UsageSnapshot {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["status"] as? String == "SUCCESS", number(json["num_turns"]) == 0,
+              let command = json["command"] as? [String: Any], command["name"] as? String == "usage",
+              let result = command["data"] as? [String: Any],
+              let groups = result["groups"] as? [[String: Any]] else { throw GaugeError.unsupported }
+        var windows: [UsageWindow] = []
+        var seen: Set<String> = []
+        for group in groups {
+            guard let buckets = group["buckets"] as? [[String: Any]] else { continue }
+            for bucket in buckets {
+                guard let id = label(bucket["id"]), bucket["disabled"] as? Bool != true,
+                      let fraction = number(bucket["remaining_fraction"]), (0...1).contains(fraction),
+                      seen.insert(id).inserted else { continue }
+                let period: (title: String, minutes: Int?)
+                switch bucket["window"] as? String {
+                case "weekly": period = ("주간", 10080)
+                case "5h": period = ("5시간", 300)
+                default: period = (label(bucket["name"]) ?? id, nil)
+                }
+                let title: String
+                if id.hasPrefix("gemini-") { title = period.title }
+                else {
+                    let name = id.hasPrefix("3p-") ? "Claude·GPT" : (label(group["name"]) ?? id)
+                    title = "\(name) · \(period.title)"
+                }
+                // Unused buckets can use the Unix epoch to mean no reset is scheduled.
+                let reset = date(bucket["reset_time"]).flatMap { $0.timeIntervalSince1970 > 0 ? $0 : nil }
+                windows.append(UsageWindow(id: id, title: title, usedPercent: (1 - fraction) * 100,
+                                           resetsAt: reset, durationMinutes: period.minutes))
+            }
+        }
+        guard !windows.isEmpty else { throw GaugeError.unsupported }
+        return UsageSnapshot(windows: windows, fetchedAt: now)
+    }
     public static func codex(_ json: [String: Any], now: Date = Date()) throws -> UsageSnapshot {
+        let resets = codexResets(json["rateLimitResetCredits"])
         var windows: [UsageWindow] = []
         var plan: String?
         let buckets: [(String, [String: Any])]
@@ -130,7 +211,7 @@ public enum UsageParser {
             }
         } else if let legacy = json["rateLimits"] as? [String: Any] {
             buckets = [(legacy["limitId"] as? String ?? "codex", legacy)]
-        } else { throw GaugeError.unsupported }
+        } else { buckets = [] }
         for (bucketID, bucket) in buckets {
             plan = plan ?? bucket["planType"] as? String
             for key in ["primary", "secondary"] {
@@ -145,8 +226,8 @@ public enum UsageParser {
                                            resetsAt: date(item["resetsAt"]), durationMinutes: minutes))
             }
         }
-        guard !windows.isEmpty else { throw GaugeError.unsupported }
-        return UsageSnapshot(windows: windows, fetchedAt: now, plan: plan)
+        guard !windows.isEmpty || resets != nil else { throw GaugeError.unsupported }
+        return UsageSnapshot(windows: windows, fetchedAt: now, plan: plan, limitResets: resets)
     }
     public static func number(_ raw: Any?) -> Double? {
         guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }

@@ -58,10 +58,14 @@ struct AddAccountView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("계정 이름").font(.system(size: 13, weight: .semibold))
-                TextField(provider == .claude ? "예: 개인 Claude, 회사 Claude" : "예: 개인 Codex, 프로젝트 계정", text: $name)
+                TextField("예: 내 \(provider.title)", text: $name)
                     .textFieldStyle(.roundedBorder).controlSize(.large).disabled(busy || reconnecting != nil)
             }
-            if provider == .claude { claudeFields } else { codexFields }
+            switch provider {
+            case .claude: claudeFields
+            case .codex: codexFields
+            case .gemini: geminiFields
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(Palette.red)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -96,15 +100,19 @@ struct AddAccountView: View {
             }
             Rectangle().fill(Palette.line).frame(height: 1)
             HStack {
-                Label("인증 정보는 이 Mac의 키체인에 저장", systemImage: "lock.shield").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Label(provider == .gemini ? "Antigravity CLI가 로그인을 관리" : "인증 정보는 이 Mac의 키체인에 저장",
+                      systemImage: "lock.shield").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                 Spacer()
                 Button("취소") { dismiss() }.buttonStyle(QuietButtonStyle())
                 Button {
-                    if provider == .claude {
+                    switch provider {
+                    case .claude:
                         if manualClaude { connectClaude() } else { connectClaudeBrowser() }
-                    } else { connectCodex() }
+                    case .codex: connectCodex()
+                    case .gemini: connectGemini()
+                    }
                 } label: {
-                    Text(provider == .claude && manualClaude ? "토큰으로 연결" : "브라우저에서 로그인")
+                    Text(provider == .gemini ? "이 Mac 로그인 연결" : provider == .claude && manualClaude ? "토큰으로 연결" : "브라우저에서 로그인")
                 }.buttonStyle(PrimaryButtonStyle())
                     .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (provider == .claude && manualClaude && credential.isEmpty))
             }
@@ -118,6 +126,8 @@ struct AddAccountView: View {
                 Label("기본 브라우저에서 Claude에 로그인", systemImage: "globe").font(.system(size: 15, weight: .semibold))
                 Text("Google·Apple·이메일 로그인을 사용할 수 있어요. 로그인 후 이 창으로 돌아오면 계정이 자동으로 연결됩니다.")
                     .font(.system(size: 14)).foregroundStyle(Palette.secondary).lineSpacing(4)
+                Text("macOS가 새 Claude 로그인에 대한 접근 승인을 요청하면 ‘항상 허용’을 선택해 주세요.")
+                    .font(.system(size: 12)).foregroundStyle(Palette.secondary)
                 Label(ClaudeConnection.executable() == nil ? "Claude Code 설치 필요 · 또는 토큰으로 연결" : "이 Mac의 Claude Code를 찾았어요", systemImage: ClaudeConnection.executable() == nil ? "exclamationmark.circle" : "checkmark.circle.fill")
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
             }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(Palette.background, in: RoundedRectangle(cornerRadius: 10))
@@ -157,6 +167,35 @@ struct AddAccountView: View {
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(Palette.background, in: RoundedRectangle(cornerRadius: 11))
+    }
+
+    private var geminiFields: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Antigravity CLI로 Gemini 사용량 연결", systemImage: "terminal").font(.system(size: 15, weight: .semibold))
+            Text("터미널에서 agy를 실행해 Google 계정에 로그인한 뒤 연결하세요. Gauge는 이 Mac의 현재 CLI 로그인 한 개에서 모델별 한도와 초기화 시간을 가져옵니다.")
+                .font(.system(size: 14)).foregroundStyle(Palette.secondary).lineSpacing(4)
+            if GeminiService.executable() == nil {
+                Link("Antigravity CLI 설치 안내", destination: GeminiService.installURL).font(.system(size: 13))
+            }
+        }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(Palette.background, in: RoundedRectangle(cornerRadius: 11))
+    }
+
+    private func connectGemini() {
+        busy = true
+        error = nil
+        status = "Gemini 사용량을 가져오고 있어요…"
+        connectTask = Task { @MainActor in
+            defer { busy = false }
+            do {
+                let snapshot = try await GeminiService.usage()
+                try Task.checkCancellation()
+                let account = Account(provider: .gemini, name: String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)))
+                try store.add(account, snapshot: snapshot)
+                completed = true
+                dismiss()
+            } catch is CancellationError { }
+            catch { self.error = error.localizedDescription }
+        }
     }
 
     private func importFile() {
@@ -220,10 +259,12 @@ struct AddAccountView: View {
                     // link is retained for manual-code recovery only.
                 }
                 try Task.checkCancellation()
-                // This is an explicit login action. A newly created CLI item
-                // may need its one-time Gauge ACL grant before quiet polling.
-                status = "macOS에서 로그인 정보 접근을 승인해 주세요…"
-                try await Task.detached { try ClaudeProfile.authorize(id) }.value
+                do { try await Task.detached { try ClaudeProfile.authorize(id, allowInteraction: false) }.value }
+                catch GaugeError.keychainAccessRequired {
+                    try Task.checkCancellation()
+                    status = "macOS가 요청하면 ‘항상 허용’을 선택해 주세요…"
+                    try await Task.detached { try ClaudeProfile.authorize(id) }.value
+                }
                 try Task.checkCancellation()
                 status = "구독 사용량을 가져오고 있어요…"
                 ClaudeProfile.resetPending(id)
@@ -242,7 +283,7 @@ struct AddAccountView: View {
                     }.value
                     ClaudeProfile.resetPending(reconnecting.id)
                     try store.finishReauthentication(reconnecting, replacement: account, snapshot: snapshot)
-                    try? ClaudeProfile.remove(id)
+                    try? ClaudeProfile.remove(id, allowInteraction: false)
                 } else { try store.add(account, snapshot: snapshot) }
                 completed = true
                 pendingClaudeID = nil; claudeConnection = nil; loginURL = nil
@@ -303,7 +344,7 @@ struct AddAccountView: View {
         claudeConnection = nil; pendingClaudeID = nil; authorizationCode = ""
         Task { @MainActor in
             await claude?.cancel()
-            if let claudeID { try? ClaudeProfile.remove(claudeID) }
+            if let claudeID { try? ClaudeProfile.remove(claudeID, allowInteraction: false) }
             if let client {
                 await client.cancelLogin()
                 try? await client.logout()
