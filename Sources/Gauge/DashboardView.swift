@@ -256,10 +256,11 @@ struct AccountCard: View {
                         if let credits = snapshot.usageCredits {
                             UsageCreditsRow(credits: credits, stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
                         }
-                        if let resets = snapshot.limitResets {
-                            LimitResetRows(inventory: resets, now: store.now,
-                                           stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
-                        }
+                    }
+                    if let resets = snapshot.limitResets {
+                        LimitResetRow(inventory: resets, now: store.now,
+                                      stale: error != nil || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                            .padding(.top, snapshot.windows.isEmpty && snapshot.usageCredits == nil ? 0 : 12)
                     }
                 } else {
                     Text("사용량 정보를 기다리고 있어요").font(.system(size: 14)).foregroundStyle(Palette.secondary).frame(height: 85)
@@ -303,7 +304,7 @@ struct UsageCreditsRow: View {
     }
 }
 
-struct LimitResetRows: View {
+struct LimitResetRow: View {
     let inventory: LimitResetInventory
     let now: Date
     let stale: Bool
@@ -311,29 +312,36 @@ struct LimitResetRows: View {
     var body: some View {
         let general = inventory.availableGrants(at: now, fable: false)
         let fable = inventory.availableGrants(at: now, fable: true)
-        VStack(alignment: .leading, spacing: 8) {
-            if !general.isEmpty || inventory.unlistedCount > 0 || fable.isEmpty {
-                row("리셋 사용권", grants: general, unlisted: inventory.unlistedCount)
-            }
-            if !fable.isEmpty { row("Fable 리셋 사용권", grants: fable) }
-            if stale {
-                Text("마지막 확인값").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+        let generalCount = general.reduce(inventory.unlistedCount) { $0 + $1.count }
+        let fableCount = fable.reduce(0) { $0 + $1.count }
+        let counts = fableCount > 0 ? "일반 \(generalCount)개 · Fable \(fableCount)개" : "\(generalCount)개 남음"
+        let details = [
+            stale ? "마지막 확인값" : nil,
+            expiryDetail("일반권", grants: general),
+            expiryDetail("Fable 사용권", grants: fable),
+        ].compactMap { $0 }.joined(separator: "\n")
+
+        HStack(spacing: 6) {
+            Text("리셋 사용권").foregroundStyle(Palette.secondary)
+            Text(counts).fontWeight(.semibold).monospacedDigit()
+                .foregroundStyle(stale ? Palette.secondary : Palette.ink)
+            if !details.isEmpty {
+                Image(systemName: stale ? "clock" : "info.circle")
+                    .font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                    .accessibilityHidden(true)
             }
         }
+        .font(.system(size: 13))
+        .lineLimit(1)
+        .help(details)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(Text(details))
     }
 
-    private func row(_ title: String, grants: [LimitResetGrant], unlisted: Int = 0) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(title).font(.system(size: 14, weight: .medium))
-                Spacer(minLength: 8)
-                Text("\(grants.reduce(unlisted) { $0 + $1.count })개 남음").font(.system(size: 14, weight: .semibold)).monospacedDigit()
-            }
-            if let expiry = grants.compactMap(\.expiresAt).min() {
-                Text("가장 가까운 만료 \(expiry.formatted(.dateTime.month().day().hour().minute()))")
-                    .font(.system(size: 12)).foregroundStyle(Palette.secondary)
-            }
-        }.accessibilityElement(children: .combine)
+    private func expiryDetail(_ name: String, grants: [LimitResetGrant]) -> String? {
+        grants.compactMap(\.expiresAt).min().map {
+            "\(name) 가장 가까운 만료 \($0.formatted(.dateTime.month().day().hour().minute()))"
+        }
     }
 }
 

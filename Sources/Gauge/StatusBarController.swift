@@ -57,7 +57,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             : "Gauge · 클릭하여 계정 연결"
         let rowsHeight = store.accounts.reduce(CGFloat(32)) { total, account in
             let snapshot = store.snapshots[account.id.uuidString]
-            return total + 105 + CGFloat(snapshot?.windows.count ?? 1) * 65 + (snapshot?.usageCredits == nil ? 0 : 65)
+            let resetHeight: CGFloat = snapshot?.limitResets == nil ? 0 : 24
+            return total + 105 + CGFloat(snapshot?.windows.count ?? 1) * 65 + (snapshot?.usageCredits == nil ? 0 : 65) + resetHeight
         } + CGFloat(max(0, store.accounts.count - 1)) * 16
         let summaryHeight = CGFloat(115 + store.combinedQuotas.count * 55)
         let desiredHeight: CGFloat = hasAccounts ? 200 + min(580, rowsHeight + summaryHeight) : 280

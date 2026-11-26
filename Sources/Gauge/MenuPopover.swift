@@ -93,12 +93,14 @@ struct MenuPopover: View {
                                     if let credits = snapshot.usageCredits {
                                         UsageCreditsRow(credits: credits, stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
                                     }
-                                    if let resets = snapshot.limitResets {
-                                        LimitResetRows(inventory: resets, now: store.now,
-                                                       stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        if let resets = snapshot.limitResets {
+                                            LimitResetRow(inventory: resets, now: store.now,
+                                                          stale: failed || store.now.timeIntervalSince(snapshot.fetchedAt) > 600)
+                                        }
+                                        Text(failed ? "갱신 실패 · 마지막 확인값" : UsageFormatting.age(snapshot.fetchedAt, now: store.now))
+                                            .font(.system(size: 12)).foregroundStyle(failed ? Palette.red : Palette.secondary)
                                     }
-                                    Text(failed ? "갱신 실패 · 마지막 확인값" : UsageFormatting.age(snapshot.fetchedAt, now: store.now))
-                                        .font(.system(size: 12)).foregroundStyle(failed ? Palette.red : Palette.secondary)
                                 } else {
                                     Text(store.errors[account.id] ?? "갱신 대기 중").font(.system(size: 12)).foregroundStyle(Palette.secondary)
                                 }
